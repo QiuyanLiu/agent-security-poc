@@ -1,0 +1,4 @@
+requests
+mcp>=2,<3
+PyJWT
+cryptography

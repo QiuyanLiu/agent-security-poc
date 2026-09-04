@@ -1,0 +1,165 @@
+services:
+  agent:
+    build: ./agent
+
+    read_only: true
+
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev,mode=1777
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      GATEWAY_URL: http://gateway:8080
+      WORKLOAD_PRIVATE_KEY_PATH: /run/secrets/crm-agent-private.pem
+      WORKLOAD_KEY_ID: crm-agent-key-v1
+      WORKLOAD_ID: crm-agent
+      WORKLOAD_ISSUER: agent-security-poc
+      WORKLOAD_AUDIENCE: agent-security-gateway
+      WORKLOAD_TOKEN_TTL_SECONDS: "60"
+
+    volumes:
+      - ./secrets/crm-agent-private.pem:/run/secrets/crm-agent-private.pem:ro
+
+    networks:
+      - crm_gateway
+      - ingress
+
+    depends_on:
+      - gateway
+
+  reporting_agent:
+    build: ./agent
+
+    read_only: true
+
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev,mode=1777
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      GATEWAY_URL: http://gateway:8080
+      WORKLOAD_PRIVATE_KEY_PATH: /run/secrets/reporting-agent-private.pem
+      WORKLOAD_KEY_ID: reporting-agent-key-v1
+      WORKLOAD_ID: reporting-agent
+      WORKLOAD_ISSUER: agent-security-poc
+      WORKLOAD_AUDIENCE: agent-security-gateway
+      WORKLOAD_TOKEN_TTL_SECONDS: "60"
+
+    volumes:
+      - ./secrets/reporting-agent-private.pem:/run/secrets/reporting-agent-private.pem:ro
+
+    networks:
+      - reporting_gateway
+
+    depends_on:
+      - gateway
+
+  gateway:
+    build: ./gateway
+
+    environment:
+      SF_DOMAIN: ${SF_DOMAIN}
+      SF_API_VERSION: ${SF_API_VERSION}
+
+      CREDENTIAL_BROKER_URL: http://credential_broker:8090
+      BROKER_PRIVATE_KEY_PATH: /run/secrets/gateway-broker-private.pem
+      BROKER_WORKLOAD_ID: salesforce-gateway
+      BROKER_KEY_ID: gateway-broker-key-v1
+      BROKER_TOKEN_ISSUER: agent-security-gateway
+      BROKER_TOKEN_AUDIENCE: credential-broker
+
+      WORKLOAD_JWT_PUBLIC_KEY_PATH: /run/secrets/crm-agent-public.pem
+      WORKLOAD_JWT_ISSUER: agent-security-poc
+      WORKLOAD_JWT_AUDIENCE: agent-security-gateway
+
+    volumes:
+      - ./logs:/app/logs
+      - ./secrets/crm-agent-public.pem:/run/secrets/crm-agent-public.pem:ro
+      - ./secrets/reporting-agent-public.pem:/run/secrets/reporting-agent-public.pem:ro
+      - ./secrets/gateway-broker-private.pem:/run/secrets/gateway-broker-private.pem:ro
+
+    networks:
+      - crm_gateway
+      - reporting_gateway
+      - gateway_broker
+      - gateway_outbound
+
+    depends_on:
+      - credential_broker
+
+  credential_broker:
+    build: ./credential_broker
+
+    read_only: true
+
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev,mode=1777
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      SF_DOMAIN: ${SF_DOMAIN}
+      SF_CLIENT_ID: ${SF_CLIENT_ID}
+      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET}
+
+      GATEWAY_PUBLIC_KEY_PATH: /run/secrets/gateway-broker-public.pem
+      BROKER_EXPECTED_KEY_ID: gateway-broker-key-v1
+      BROKER_EXPECTED_SUBJECT: salesforce-gateway
+      BROKER_EXPECTED_ISSUER: agent-security-gateway
+      BROKER_EXPECTED_AUDIENCE: credential-broker
+
+    volumes:
+      - ./secrets/gateway-broker-public.pem:/run/secrets/gateway-broker-public.pem:ro
+
+    networks:
+      - gateway_broker
+      - broker_outbound
+
+  mcp_ingress:
+    image: nginx:alpine
+
+    depends_on:
+      - agent
+
+    ports:
+      - target: 8001
+        published: "8001"
+        host_ip: "127.0.0.1"
+        protocol: tcp
+
+    volumes:
+      - ./ingress/nginx.conf:/etc/nginx/nginx.conf:ro
+
+    networks:
+      - ingress
+
+networks:
+  crm_gateway:
+    internal: true
+
+  reporting_gateway:
+    internal: true
+
+  ingress:
+    internal: true
+
+  gateway_broker:
+    internal: true
+
+  gateway_outbound: {}
+
+  broker_outbound: {}

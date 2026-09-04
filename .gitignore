@@ -1,0 +1,40 @@
+# Notes
+.note
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Secrets and cryptographic keys
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+
+# Logs and runtime data
+*.log
+audit.jsonl
+audit-data/
+logs/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+tmp/
+temp/
