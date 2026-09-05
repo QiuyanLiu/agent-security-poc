@@ -1,3 +1,8 @@
+# Agent Security POC
+
+## Architecture
+
+```mermaid
 flowchart TD
     U["MCP Client"] --> I["MCP Ingress"]
     I --> A["Sandboxed Agent"]
@@ -5,3 +10,4 @@ flowchart TD
     G --> B["Credential Broker"]
     B --> S["Salesforce"]
     G --> L["Audit Logs"]
+```
