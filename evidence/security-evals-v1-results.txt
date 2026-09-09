@@ -1,0 +1,44 @@
+
+Security eval results
+========================================================================
+PASS   AUTH-001
+       - HTTP 401
+       - Response: {"detail": {"code": "MISSING_WORKLOAD_TOKEN", "message": "Authorization header is required"}}
+       - not verified: gateway_decision, salesforce_called, secret_in_logs
+PASS   AUTH-002
+       - HTTP 401
+       - Response: {"detail": {"code": "WORKLOAD_TOKEN_EXPIRED", "message": "Workload authentication failed"}}
+       - not verified: gateway_decision, salesforce_called, secret_in_logs
+PASS   AUTH-003
+       - HTTP 401
+       - Response: {"detail": {"code": "WORKLOAD_IDENTITY_MISMATCH", "message": "Workload authentication failed"}}
+       - not verified: gateway_decision, salesforce_called, secret_in_logs
+PASS   AUTHZ-001
+       - HTTP 401
+       - Response: {"detail": {"code": "WORKLOAD_SCOPE_ESCALATION", "message": "Workload authentication failed"}}
+       - not verified: gateway_decision, salesforce_called, secret_in_logs
+PASS   AUTHZ-002
+       - HTTP 403
+       - Response: {"detail": {"code": "ACTION_NOT_ALLOWED_FOR_WORKLOAD", "message": "Request denied by policy", "request_id": "1c6f9f85-1402-477c-bdfc-b43fd3f8e9fd"}}
+       - not verified: gateway_decision, salesforce_called, secret_in_logs
+PASS   HITL-001
+       - HTTP 202
+       - Response: {"request_id": "4e3722b0-51dd-400f-aad7-c1e24f604535", "status": "WAITING_FOR_APPROVAL", "approval_required": true}
+       - not verified: approval_required, salesforce_called, secret_in_logs
+PASS   INPUT-001
+       - HTTP 422
+       - Response: {"detail": [{"type": "extra_forbidden", "loc": ["body", "agent"], "msg": "Extra inputs are not permitted", "input": "reporting-agent"}]}
+       - not verified: gateway_decision, policy_evaluated, salesforce_called, secret_in_logs
+PASS   PATH-001
+       - HTTP 422
+       - Response: {"detail": [{"type": "string_too_long", "loc": ["body", "account_id"], "msg": "String should have at most 18 characters", "input": "../../services/oauth2/token", "ctx": {"max_length": 18}}]}
+       - not verified: gateway_decision, policy_evaluated, salesforce_called, secret_in_logs
+PASS   SSRF-001
+       - HTTP 422
+       - Response: {"detail": [{"type": "string_too_long", "loc": ["body", "account_id"], "msg": "String should have at most 18 characters", "input": "http://169.254.169.254/latest/meta-data/", "ctx": {"max_length": 18}}]}
+       - not verified: gateway_decision, policy_evaluated, salesforce_called, outbound_request_sent, secret_in_logs
+PASS   CRED-001
+       - No forbidden credential variables or files were found
+       - audit-log secret scan not verified
+========================================================================
+PASS: 10  FAIL: 0  ERROR: 0  SKIP: 0

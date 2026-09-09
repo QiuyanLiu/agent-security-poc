@@ -1,6 +1,7 @@
 from time import perf_counter
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 
 from gateway.audit import new_request_id, write_audit
 from gateway.models.execution import BusinessRequest
@@ -62,6 +63,32 @@ async def execute(
                 "code": decision.reason,
                 "message": "Request denied by policy",
                 "request_id": request_id,
+            },
+        )
+
+    if decision.effect == "REQUIRE_APPROVAL":
+        duration_ms = (
+            perf_counter() - started_at
+        ) * 1000
+
+        write_audit(
+            request_id=request_id,
+            user="workload-identity",
+            agent=identity.workload_id,
+            tool=request.action,
+            decision="REQUIRE_APPROVAL",
+            outcome="WAITING_FOR_APPROVAL",
+            duration_ms=duration_ms,
+            reason=decision.reason,
+            metadata=audit_metadata,
+        )
+
+        return JSONResponse(
+            status_code=202,
+            content={
+                "request_id": request_id,
+                "status": "WAITING_FOR_APPROVAL",
+                "approval_required": True,
             },
         )
 

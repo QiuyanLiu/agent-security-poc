@@ -5,7 +5,11 @@ from gateway.models.execution import BusinessRequest
 from gateway.security.identity import IdentityContext
 
 
-PolicyEffect = Literal["ALLOW", "DENY"]
+PolicyEffect = Literal[
+    "ALLOW",
+    "DENY",
+    "REQUIRE_APPROVAL",
+]
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,12 @@ def evaluate_policy(
                 reason="STAGE_NAME_REQUIRED",
                 required_scope=required_scope,
             )
+
+        return PolicyDecision(
+            effect="REQUIRE_APPROVAL",
+            reason="HUMAN_APPROVAL_REQUIRED",
+            required_scope=required_scope,
+        )
 
     return PolicyDecision(
         effect="ALLOW",

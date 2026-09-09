@@ -1,0 +1,251 @@
+- id: AUTH-001
+  category: authentication
+  description: Reject a request without a workload identity token
+  test_type: gateway_request
+  actor: crm-agent
+  authentication:
+    mode: none
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: get_account
+      account_id: "001000000000000AAA"
+  expected:
+    http_status: 401
+    error_code: MISSING_WORKLOAD_TOKEN
+    gateway_decision: REJECT
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: AUTH-002
+  category: authentication
+  description: Reject an expired workload identity token
+  test_type: gateway_request
+  actor: crm-agent
+  authentication:
+    mode: generated_jwt
+    signer: crm-agent-key-v1
+    claims:
+      sub: crm-agent
+      scope:
+        - account:read
+      expiration: expired
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: get_account
+      account_id: "001000000000000AAA"
+  expected:
+    http_status: 401
+    error_code: WORKLOAD_TOKEN_EXPIRED
+    gateway_decision: REJECT
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: AUTH-003
+  category: authentication
+  description: Prevent reporting-agent from impersonating crm-agent
+  test_type: gateway_request
+  actor: reporting-agent
+  authentication:
+    mode: generated_jwt
+    signer: reporting-agent-key-v1
+    claims:
+      sub: crm-agent
+      scope:
+        - account:read
+      expiration: valid
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: get_account
+      account_id: "001000000000000AAA"
+  expected:
+    http_status: 401
+    error_code: WORKLOAD_IDENTITY_MISMATCH
+    gateway_decision: REJECT
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: AUTHZ-001
+  category: authorization
+  description: Prevent reporting-agent from requesting an unregistered write scope
+  test_type: gateway_request
+  actor: reporting-agent
+  authentication:
+    mode: generated_jwt
+    signer: reporting-agent-key-v1
+    claims:
+      sub: reporting-agent
+      scope:
+        - account:read
+        - account:write
+      expiration: valid
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: get_account
+      account_id: "001000000000000AAA"
+  expected:
+    http_status: 401
+    error_code: WORKLOAD_SCOPE_ESCALATION
+    gateway_decision: REJECT
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: AUTHZ-002
+  category: authorization
+  description: Prevent reporting-agent from executing an account mutation
+  test_type: gateway_request
+  actor: reporting-agent
+  authentication:
+    mode: valid_workload_token
+    workload: reporting-agent
+    scopes:
+      - account:read
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: update_account_description
+      account_id: "001000000000000AAA"
+      description: "Unauthorised reporting-agent update"
+  expected:
+    http_status: 403
+    error_code: ACTION_NOT_ALLOWED_FOR_WORKLOAD
+    gateway_decision: DENY
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: HITL-001
+  category: human_in_the_loop
+  description: Require human approval before a sensitive opportunity update
+  test_type: gateway_request
+  actor: crm-agent
+
+  authentication:
+    mode: valid_workload_token
+    workload: crm-agent
+    scopes:
+      - opportunity:write
+
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: update_opportunity
+      opportunity_id: "006000000000000AAA"
+      stage_name: "Closed Won"
+
+  expected:
+    http_status: 202
+    approval_required: true
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: INPUT-001
+  category: input_validation
+  description: Reject an identity field injected into the business payload
+  test_type: gateway_request
+  actor: crm-agent
+  authentication:
+    mode: valid_workload_token
+    workload: crm-agent
+    scopes:
+      - account:read
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: get_account
+      account_id: "001000000000000AAA"
+      agent: reporting-agent
+  expected:
+    http_status: 422
+    error_type: extra_forbidden
+    gateway_decision: VALIDATION_REJECT
+    policy_evaluated: false
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: PATH-001
+  category: path_injection
+  description: Reject a Salesforce record ID containing path traversal content
+  test_type: gateway_request
+  actor: crm-agent
+  authentication:
+    mode: valid_workload_token
+    workload: crm-agent
+    scopes:
+      - account:read
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: get_account
+      account_id: "../../services/oauth2/token"
+  expected:
+    http_status: 422
+    gateway_decision: VALIDATION_REJECT
+    policy_evaluated: false
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: SSRF-001
+  category: ssrf
+  description: Reject an attempt to reach the cloud instance metadata service
+  test_type: gateway_request
+  actor: crm-agent
+  authentication:
+    mode: valid_workload_token
+    workload: crm-agent
+    scopes:
+      - account:read
+  request:
+    method: POST
+    path: /execute
+    body:
+      action: get_account
+      account_id: "http://169.254.169.254/latest/meta-data/"
+  expected:
+    http_status: 422
+    gateway_decision: VALIDATION_REJECT
+    policy_evaluated: false
+    outbound_request_sent: false
+    salesforce_called: false
+    secret_in_response: false
+    secret_in_logs: false
+
+- id: CRED-001
+  category: credential_isolation
+  description: Verify that the agent container cannot access Salesforce credentials
+  test_type: container_assertion
+  actor: crm-agent
+  target_service: agent
+  checks:
+    environment_variables_absent:
+      - SF_CLIENT_ID
+      - SF_CLIENT_SECRET
+      - SALESFORCE_ACCESS_TOKEN
+    filesystem_paths_absent:
+      - /run/secrets/salesforce-client-secret
+      - /run/secrets/salesforce-access-token
+    peer_private_keys_absent:
+      - /run/secrets/reporting-agent-private.pem
+  expected:
+    credentials_exposed: false
+    peer_credentials_exposed: false
+    secret_in_command_output: false
+    secret_in_logs: false

@@ -22,6 +22,7 @@ WORKLOAD_REGISTRY = {
             {
                 "account:read",
                 "account:write",
+                "opportunity:write",
             }
         ),
     ),
