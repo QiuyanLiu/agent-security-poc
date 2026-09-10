@@ -21,6 +21,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CASES = ROOT / "evals" / "security-eval-cases.yaml"
+AUDIT_FILE = ROOT / "logs" / "audit.jsonl"
 DEFAULT_GATEWAY_URL = "http://gateway:8080"
 DEFAULT_SERVICE_BY_ACTOR = {
     "crm-agent": "agent",
@@ -62,6 +63,60 @@ def service_for(case: dict[str, Any]) -> str:
     env_name = "EVAL_SERVICE_" + actor.upper().replace("-", "_")
     return os.getenv(env_name, DEFAULT_SERVICE_BY_ACTOR.get(actor, actor))
 
+def extract_request_id(body: Any) -> str | None:
+    """Extract a request ID from success or FastAPI error responses."""
+    if not isinstance(body, dict):
+        return None
+
+    request_id = body.get("request_id")
+    if isinstance(request_id, str):
+        return request_id
+
+    detail = body.get("detail")
+    if isinstance(detail, dict):
+        request_id = detail.get("request_id")
+        if isinstance(request_id, str):
+            return request_id
+
+    return None
+
+
+def audit_file_offset() -> int:
+    """Return the audit-file size before executing a test case."""
+    try:
+        return AUDIT_FILE.stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
+def read_new_audit_entries(offset: int) -> tuple[str, list[dict[str, Any]]]:
+    """Read audit entries appended after the test case started."""
+    if not AUDIT_FILE.exists():
+        return "", []
+
+    # Handle log truncation or replacement.
+    if AUDIT_FILE.stat().st_size < offset:
+        offset = 0
+
+    with AUDIT_FILE.open(encoding="utf-8") as stream:
+        stream.seek(offset)
+        text = stream.read()
+
+    events: list[dict[str, Any]] = []
+
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(event, dict):
+            events.append(event)
+
+    return text, events
 
 def run_gateway_request(case: dict[str, Any], gateway_url: str) -> Result:
     service = service_for(case)
@@ -138,7 +193,7 @@ except Exception as exc:
     print(json.dumps({"transport_error": type(exc).__name__, "message": str(exc)}))
     sys.exit(2)
 '''
-
+    audit_offset = audit_file_offset()
     process = subprocess.run(
         ["docker", "compose", "exec", "-T", service, "python", "-c", remote_program],
         cwd=ROOT,
@@ -164,44 +219,170 @@ except Exception as exc:
     expected = case.get("expected", {})
     failures: list[str] = []
     notes: list[str] = []
+    verified: list[str] = []
+
     actual_status = actual.get("http_status")
     body = actual.get("body")
     body_text = json.dumps(body, sort_keys=True)
+    request_id = extract_request_id(body)
 
-    if "http_status" in expected and actual_status != expected["http_status"]:
-        failures.append(
-            f"HTTP status expected {expected['http_status']}, got {actual_status}"
-        )
+    new_audit_text, new_audit_events = read_new_audit_entries(
+        audit_offset
+    )
+
+    if "http_status" in expected:
+        expected_status = expected["http_status"]
+
+        if actual_status != expected_status:
+            failures.append(
+                f"HTTP status expected {expected_status}, got {actual_status}"
+            )
+        else:
+            verified.append(
+                f"HTTP status verified: {actual_status}"
+            )
+
     for key in ("error_code", "error_type"):
-        if key in expected and str(expected[key]) not in body_text:
-            failures.append(f"Expected {key} {expected[key]!r} was not in response")
+        if key not in expected:
+            continue
 
-    if expected.get("secret_in_response") is False and SENSITIVE_PATTERN.search(body_text):
-        failures.append("Potential secret marker found in response")
+        if str(expected[key]) not in body_text:
+            failures.append(
+                f"Expected {key} {expected[key]!r} was not in response"
+            )
+        else:
+            verified.append(
+                f"Response {key} verified: {expected[key]}"
+            )
 
-    # These require audit/Salesforce instrumentation and cannot be proven from
-    # an HTTP response alone. Keep them visible instead of silently passing.
-    non_http_assertions = [
-        key for key in (
-            "gateway_decision", "outcome", "approval_required",
-            "policy_evaluated", "salesforce_called", "outbound_request_sent",
-            "secret_in_logs",
-        ) if key in expected
+    expected_response = expected.get("response", {})
+
+    if expected_response:
+        if not isinstance(body, dict):
+            failures.append(
+                "Cannot verify response fields: response body is not an object"
+            )
+        else:
+            for key, expected_value in expected_response.items():
+                actual_value = body.get(key)
+
+                if actual_value != expected_value:
+                    failures.append(
+                        f"Response field {key!r}: expected "
+                        f"{expected_value!r}, got {actual_value!r}"
+                    )
+                else:
+                    verified.append(
+                        f"Response {key} verified: {actual_value!r}"
+                    )
+
+    if expected.get("secret_in_response") is False:
+        if SENSITIVE_PATTERN.search(body_text):
+            failures.append(
+                "Potential secret marker found in response"
+            )
+        else:
+            verified.append(
+                "No secret detected in response"
+            )
+
+    expected_audit = expected.get("audit")
+
+    if expected_audit:
+        if request_id is None:
+            failures.append(
+                "Cannot correlate audit event: response has no request_id"
+            )
+        else:
+            matching_events = [
+                event
+                for event in new_audit_events
+                if event.get("request_id") == request_id
+            ]
+
+            if not matching_events:
+                failures.append(
+                    f"No audit event found for request_id {request_id}"
+                )
+            elif len(matching_events) > 1:
+                failures.append(
+                    f"Expected one audit event for request_id {request_id}, "
+                    f"found {len(matching_events)}"
+                )
+            else:
+                audit_event = matching_events[0]
+
+                verified.append(
+                    f"Audit event correlated by request_id: {request_id}"
+                )
+
+                for key, expected_value in expected_audit.items():
+                    actual_value = audit_event.get(key)
+
+                    if actual_value != expected_value:
+                        failures.append(
+                            f"Audit field {key!r}: expected "
+                            f"{expected_value!r}, got {actual_value!r}"
+                        )
+                    else:
+                        verified.append(
+                            f"Audit {key} verified: {actual_value}"
+                        )
+
+    if expected.get("secret_in_logs") is False:
+        if SENSITIVE_PATTERN.search(new_audit_text):
+            failures.append(
+                "Potential secret marker found in new audit entries"
+            )
+        else:
+            verified.append(
+                "No secret detected in new audit entries"
+            )
+
+    unsupported_assertions = [
+        key
+        for key in (
+            "gateway_decision",
+            "outcome",
+            "approval_required",
+            "policy_evaluated",
+            "salesforce_called",
+            "outbound_request_sent",
+            "credential_broker_called",
+        )
+        if key in expected
     ]
-    if non_http_assertions:
-        notes.append("not verified: " + ", ".join(non_http_assertions))
 
-    if not any(key in expected for key in ("http_status", "error_code", "error_type")):
-        notes.append("no executable HTTP assertion defined")
+    if unsupported_assertions:
+        notes.append(
+            "not verified: " + ", ".join(unsupported_assertions)
+        )
+
+    if not any(
+        key in expected
+        for key in (
+            "http_status",
+            "error_code",
+            "error_type",
+            "response",
+            "audit",
+        )
+    ):
+        notes.append("no executable assertion defined")
         return Result(str(case["id"]), "SKIP", notes)
 
     details = [
-        f"HTTP {actual_status}",
+        *verified,
         f"Response: {json.dumps(body, ensure_ascii=False)}",
         *failures,
         *notes,
     ]
-    return Result(str(case["id"]), "FAIL" if failures else "PASS", details)
+
+    return Result(
+        str(case["id"]),
+        "FAIL" if failures else "PASS",
+        details,
+    )
 
 
 def path_exists(service: str, path: str) -> bool:

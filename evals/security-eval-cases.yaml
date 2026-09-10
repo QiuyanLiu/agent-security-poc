@@ -148,8 +148,16 @@
 
   expected:
     http_status: 202
-    approval_required: true
-    salesforce_called: false
+
+    response:
+      status: WAITING_FOR_APPROVAL
+      approval_required: true
+
+    audit:
+      decision: REQUIRE_APPROVAL
+      outcome: WAITING_FOR_APPROVAL
+
+    credential_broker_called: false
     secret_in_response: false
     secret_in_logs: false
 
