@@ -121,7 +121,8 @@ services:
       BROKER_EXPECTED_SUBJECT: salesforce-gateway
       BROKER_EXPECTED_ISSUER: agent-security-gateway
       BROKER_EXPECTED_AUDIENCE: credential-broker
-
+      TEST_MODE: "${TEST_MODE:-false}"
+      
     volumes:
       - ./secrets/gateway-broker-public.pem:/run/secrets/gateway-broker-public.pem:ro
 

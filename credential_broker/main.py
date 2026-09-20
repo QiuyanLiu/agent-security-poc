@@ -45,6 +45,14 @@ EXPECTED_AUDIENCE = os.environ.get(
 _used_jti: dict[str, int] = {}
 _jti_lock = threading.Lock()
 
+TEST_MODE = os.environ.get(
+    "TEST_MODE",
+    "false",
+).lower() == "true"
+
+_salesforce_token_request_count = 0
+_counter_lock = threading.Lock()
+
 
 def authenticate_gateway(
     authorization: str | None,
@@ -158,6 +166,17 @@ def health() -> dict[str, str]:
     return {"status": "healthy"}
 
 
+@app.get("/__test__/request-count")
+def get_request_count() -> dict[str, int]:
+    if not TEST_MODE:
+        raise HTTPException(status_code=404)
+
+    with _counter_lock:
+        return {
+            "request_count": _salesforce_token_request_count
+        }
+
+
 @app.post("/token/salesforce")
 def issue_salesforce_token(
     response: Response,
@@ -167,6 +186,11 @@ def issue_salesforce_token(
 
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+
+    global _salesforce_token_request_count
+
+    with _counter_lock:
+        _salesforce_token_request_count += 1
 
     try:
         return request_salesforce_token()
