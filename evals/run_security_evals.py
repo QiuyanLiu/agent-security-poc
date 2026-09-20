@@ -193,6 +193,33 @@ except Exception as exc:
     print(json.dumps({"transport_error": type(exc).__name__, "message": str(exc)}))
     sys.exit(2)
 '''
+
+    expected = case.get("expected", {})
+    failures: list[str] = []
+    notes: list[str] = []
+    verified: list[str] = []
+
+    check_broker = "credential_broker_called" in expected
+    expected_broker_called = expected.get("credential_broker_called")
+    broker_count_before = None
+
+    if check_broker:
+        if type(expected_broker_called) is not bool:
+            return Result(
+                str(case["id"]),
+                "FAIL",
+                ["credential_broker_called must be a YAML boolean"],
+            )
+
+        try:
+            broker_count_before = get_credential_broker_request_count()
+        except Exception:
+            return Result(
+                str(case["id"]),
+                "FAIL",
+                ["Cannot read Broker counter before request; test aborted"],
+            )
+    
     audit_offset = audit_file_offset()
     process = subprocess.run(
         ["docker", "compose", "exec", "-T", service, "python", "-c", remote_program],
@@ -216,10 +243,39 @@ except Exception as exc:
             [f"{actual['transport_error']}: {actual.get('message', '')}"],
         )
 
-    expected = case.get("expected", {})
-    failures: list[str] = []
-    notes: list[str] = []
-    verified: list[str] = []
+    if check_broker:
+        try:
+            broker_count_after = get_credential_broker_request_count()
+        except Exception:
+            failures.append(
+                "Cannot read Broker counter after request"
+            )
+        else:
+            delta = broker_count_after - broker_count_before
+
+            if delta < 0:
+                failures.append(
+                    "Broker counter decreased; possible restart/reset"
+                )
+            elif expected_broker_called is False:
+                if delta != 0:
+                    failures.append(
+                        f"Broker counter increased: "
+                        f"{broker_count_before} -> {broker_count_after}"
+                    )
+                else:
+                    verified.append(
+                        f"Broker request count unchanged: "
+                        f"{broker_count_before} -> {broker_count_after}"
+                    )
+            elif delta == 0:
+                failures.append(
+                    "Expected a Broker call, but counter did not increase"
+                )
+            else:
+                verified.append(
+                    f"Broker request count increased by {delta}"
+                )
 
     actual_status = actual.get("http_status")
     body = actual.get("body")
@@ -348,7 +404,6 @@ except Exception as exc:
             "policy_evaluated",
             "salesforce_called",
             "outbound_request_sent",
-            "credential_broker_called",
         )
         if key in expected
     ]
@@ -366,6 +421,7 @@ except Exception as exc:
             "error_type",
             "response",
             "audit",
+            "credential_broker_called",
         )
     ):
         notes.append("no executable assertion defined")
@@ -470,6 +526,64 @@ def main() -> int:
     print("  ".join(f"{name}: {count}" for name, count in counts.items()))
     return 1 if counts["FAIL"] or counts["ERROR"] else 0
 
+def get_credential_broker_request_count() -> int:
+    program = r'''
+import requests
+
+response = requests.get(
+    "http://credential_broker:8090/__test__/request-count",
+    timeout=5,
+)
+response.raise_for_status()
+
+payload = response.json()
+request_count = payload.get("request_count")
+
+if type(request_count) is not int or request_count < 0:
+    raise RuntimeError(
+        "Credential Broker request_count is not an integer"
+    )
+
+print(request_count)
+'''
+
+    completed = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "gateway",
+            "python",
+            "-c",
+            program,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=ROOT,
+    )
+
+    if completed.returncode != 0:
+        details = (
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or "unknown error"
+        )
+        raise RuntimeError(
+            "Unable to read Credential Broker request count: "
+            f"{details}"
+        )
+
+    output = completed.stdout.strip()
+
+    try:
+        return int(output)
+    except ValueError as error:
+        raise RuntimeError(
+            "Invalid Credential Broker request count: "
+            f"{output!r}"
+        ) from error
 
 if __name__ == "__main__":
     raise SystemExit(main())

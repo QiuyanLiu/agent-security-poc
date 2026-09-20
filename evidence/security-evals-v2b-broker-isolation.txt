@@ -1,0 +1,16 @@
+
+Security eval results
+========================================================================
+PASS   HITL-001
+       - Broker request count unchanged: 0 -> 0
+       - HTTP status verified: 202
+       - Response status verified: 'WAITING_FOR_APPROVAL'
+       - Response approval_required verified: True
+       - No secret detected in response
+       - Audit event correlated by request_id: c1a8c3e9-708f-44c8-85ef-481e173d89fa
+       - Audit decision verified: REQUIRE_APPROVAL
+       - Audit outcome verified: WAITING_FOR_APPROVAL
+       - No secret detected in new audit entries
+       - Response: {"request_id": "c1a8c3e9-708f-44c8-85ef-481e173d89fa", "status": "WAITING_FOR_APPROVAL", "approval_required": true}
+========================================================================
+PASS: 1  FAIL: 0  ERROR: 0  SKIP: 0
